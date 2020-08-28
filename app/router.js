@@ -100,7 +100,7 @@ module.exports = app => {
   router.get(
     '/address/:address/fgc20-mempool-txs/:token',
     addressMiddleware, middleware.contract('token'),
-    controller.address.qrc20TokenMempoolTransactions
+    controller.address.fgc20TokenMempoolTransactions
   )
   router.get(
     '/address/:address/utxo',
@@ -171,7 +171,7 @@ module.exports = app => {
   router.get(
     '/fgc20/txs',
     paginationMiddleware,
-    controller.qrc20.allTransactions
+    controller.fgc20.allTransactions
   )
   router.get(
     '/fgc20/:token/txs',

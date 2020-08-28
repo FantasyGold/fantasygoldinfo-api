@@ -83,7 +83,7 @@ class FGC20Service extends Service {
         name: item.name,
         symbol: item.symbol,
         decimals: item.decimals,
-        balance: item.contract.qrc20Balances.map(({balance}) => balance).reduce((x, y) => x + y),
+        balance: item.contract.fgc20Balances.map(({balance}) => balance).reduce((x, y) => x + y),
         unconfirmed: {
           received: 0n,
           sent: 0n
@@ -142,9 +142,9 @@ class FGC20Service extends Service {
           data = {
             address: item.output.address.contract.address.toString('hex'),
             addressHex: item.output.address.contract.address,
-            name: item.output.address.contract.qrc20.name,
-            symbol: item.output.address.contract.qrc20.symbol,
-            decimals: item.output.address.contract.qrc20.decimals,
+            name: item.output.address.contract.fgc20.name,
+            symbol: item.output.address.contract.fgc20.symbol,
+            decimals: item.output.address.contract.fgc20.decimals,
             balance: 0n,
             unconfirmed: {
               received: 0n,
@@ -178,7 +178,7 @@ class FGC20Service extends Service {
     const transferABI = Solidity.fgc20ABIs.find(abi => abi.name === 'transfer')
     const {
       Address, TransactionOutput,
-      Contract, EvmReceipt: EVMReceipt, Qrc20: QRC20, Qrc20Balance: QRC20Balance,
+      Contract, EvmReceipt: EVMReceipt, Fgc20: FGC20, Fgc20Balance: FGC20Balance,
       where, col
     } = this.ctx.model
     const {in: $in} = this.app.Sequelize.Op
