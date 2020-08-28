@@ -30,7 +30,7 @@ class FGC721Service extends Service {
     return {
       totalCount,
       tokens: list.map(item => ({
-        address: item.address,
+        address: item.addressHex.toString('hex'),
         addressHex: item.addressHex,
         name: item.name.toString(),
         symbol: item.symbol.toString(),
@@ -61,7 +61,7 @@ class FGC721Service extends Service {
       INNER JOIN fgc721 ON fgc721.contract_address = fgc721_token.contract_address
     `, {type: db.QueryTypes.SELECT, transaction: this.ctx.state.transaction})
     return list.map(item => ({
-      address: item.address,
+      address: item.addressHex.toString('hex'),
       addressHex: item.addressHex,
       name: item.name.toString(),
       symbol: item.symbol.toString(),

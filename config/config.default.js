@@ -67,3 +67,5 @@ exports.fantasygoldinfo = {
     password: 'password'
   }
 }
+
+exports.cmcAPIKey = null

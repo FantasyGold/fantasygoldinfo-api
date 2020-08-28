@@ -79,18 +79,22 @@ class MiscService extends Service {
         ) fgc20_balance
         INNER JOIN contract ON contract.address = fgc20_balance.contract_address
       `, {type: db.QueryTypes.SELECT, transaction})
-      return {type: 'contract', address, addressHex: addressHex.toString('hex')}
+      return {type: 'contract', address: addressHex.toString('hex'), addressHex: addressHex.toString('hex')}
     }
 
     return {}
   }
 
   async getPrices() {
+    let apiKey = this.app.config.cmcAPIKey
+    if (!apiKey) {
+      return {}
+    }
     const coinId = 2870
     let [USDResult, CNYResult] = await Promise.all([
       this.ctx.curl('https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest', {
         headers: {
-          'X-CMC_PRO_API_KEY': '00000000-0000-0000-0000-000000000000',
+          'X-CMC_PRO_API_KEY': apiKey,
           Accept: 'application/json'
         },
         data: {
@@ -101,15 +105,19 @@ class MiscService extends Service {
       }),
       this.ctx.curl('https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest', {
         headers: {
-          'X-CMC_PRO_API_KEY': '00000000-0000-0000-0000-000000000000',
+          'X-CMC_PRO_API_KEY': apiKey,
           Accept: 'application/json'
+        },
+        data: {
+          id: coinId,
+          convert: 'CNY'
         },
         dataType: 'json'
       })
     ])
     return {
       USD: USDResult.data.data[coinId].quote.USD.price,
-      
+      CNY: CNYResult.data.data[coinId].quote.CNY.price
     }
   }
 }

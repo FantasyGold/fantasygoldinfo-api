@@ -18,10 +18,15 @@ class AddressController extends Controller {
         name: item.name,
         symbol: item.symbol,
         decimals: item.decimals,
-        balance: item.balance.toString()
+        balance: item.balance.toString(),
+        unconfirmed: {
+          received: item.unconfirmed.received.toString(),
+          sent: item.unconfirmed.sent.toString()
+        },
+        isUnconfirmed: item.isUnconfirmed
       })),
       fgc721Balances: summary.fgc721Balances.map(item => ({
-        address: item.address,
+        address: item.addressHex.toString('hex'),
         addressHex: item.addressHex.toString('hex'),
         name: item.name,
         symbol: item.symbol,
@@ -75,10 +80,16 @@ class AddressController extends Controller {
     if (token.type !== 'fgc20') {
       ctx.body = {}
     }
-    let {balance, decimals} = await ctx.service.fgc20.getFGC20Balance(address.rawAddresses, token.contractAddress)
+    let {name, symbol, decimals, balance, unconfirmed} = await ctx.service.fgc20.getFGC20Balance(address.rawAddresses, token.contractAddress)
     ctx.body = {
+      name,
+      symbol,
+      decimals,
       balance: balance.toString(),
-      decimals
+      unconfirmed: {
+        received: unconfirmed.received.toString(),
+        sent: unconfirmed.sent.toString()
+      }
     }
   }
 
@@ -107,7 +118,8 @@ class AddressController extends Controller {
         inputValue: transaction.inputValue.toString(),
         outputValue: transaction.outputValue.toString(),
         refundValue: transaction.refundValue.toString(),
-        fees: transaction.fees.toString()
+        fees: transaction.fees.toString(),
+        type: transaction.type
       }))
     }
   }
@@ -130,16 +142,16 @@ class AddressController extends Controller {
         gasPrice: transaction.scriptPubKey.gasPrice,
         byteCode: transaction.scriptPubKey.byteCode.toString('hex'),
         outputValue: transaction.value.toString(),
-        outputAddress: transaction.outputAddress,
+        outputAddress: transaction.outputAddressHex.toString('hex'),
         outputAddressHex: transaction.outputAddressHex.toString('hex'),
         sender: transaction.sender.toString(),
         gasUsed: transaction.gasUsed,
-        contractAddress: transaction.contractAddress,
+        contractAddress: transaction.contractAddressHex.toString('hex'),
         contractAddressHex: transaction.contractAddressHex.toString('hex'),
         excepted: transaction.excepted,
         exceptedMessage: transaction.exceptedMessage,
         evmLogs: transaction.evmLogs.map(log => ({
-          address: log.address,
+          address: log.addressHex.toString('hex'),
           addressHex: log.addressHex.toString('hex'),
           topics: log.topics.map(topic => topic.toString('hex')),
           data: log.data.toString('hex')
@@ -171,6 +183,22 @@ class AddressController extends Controller {
     }
   }
 
+  async fgc20TokenMempoolTransactions() {
+    let {ctx} = this
+    let {address, token} = ctx.state
+    let transactions = await ctx.service.address.getAddressFGC20TokenMempoolTransactions(address.rawAddresses, token)
+    ctx.body = transactions.map(transaction => ({
+      transactionId: transaction.transactionId.toString('hex'),
+      outputIndex: transaction.outputIndex,
+      from: transaction.from,
+      fromHex: transaction.fromHex && transaction.fromHex.toString('hex'),
+      to: transaction.to,
+      toHex: transaction.toHex && transaction.toHex.toString('hex'),
+      value: transaction.value.toString(),
+      amount: transaction.amount.toString()
+    }))
+  }
+
   async utxo() {
     let {ctx} = this
     let utxos = await ctx.service.address.getUTXO(ctx.state.address.addressIds)
@@ -178,7 +206,7 @@ class AddressController extends Controller {
       transactionId: utxo.transactionId.toString('hex'),
       outputIndex: utxo.outputIndex,
       scriptPubKey: utxo.scriptPubKey.toString('hex'),
-      address: utxo.address.string,
+      address: utxo.address,
       value: utxo.value.toString(),
       isStake: utxo.isStake,
       blockHeight: utxo.blockHeight,
@@ -231,7 +259,7 @@ class AddressController extends Controller {
         blockHeight: tx.block.height,
         timestamp: tx.block.timestamp,
         tokens: tx.tokens.map(item => ({
-          address: item.address,
+          address: item.addressHex.toString('hex'),
           addressHex: item.addressHex.toString('hex'),
           name: item.name,
           symbol: item.symbol,

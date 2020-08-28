@@ -33,7 +33,7 @@ class FGC20Service extends Service {
     return {
       totalCount,
       tokens: list.map(item => ({
-        address: item.address,
+        address: item.addressHex.toString('hex'),
         addressHex: item.addressHex,
         name: item.name.toString(),
         symbol: item.symbol.toString(),
@@ -50,7 +50,13 @@ class FGC20Service extends Service {
     if (hexAddresses.length === 0) {
       return []
     }
-    const {Contract, Fgc20: FGC20, Fgc20Balance: FGC20Balance} = this.ctx.model
+    const {OutputScript, Solidity} = this.app.qtuminfo.lib
+    const transferABI = Solidity.fgc20ABIs.find(abi => abi.name === 'transfer')
+    const {
+      Address, TransactionOutput,
+      Contract, EvmReceipt: EVMReceipt, Fgc20: FGC20, Fgc20Balance: FGC20Balance,
+      where, col
+    } = this.ctx.model
     const {in: $in} = this.app.Sequelize.Op
     let list = await FGC20.findAll({
       attributes: ['contractAddress', 'name', 'symbol', 'decimals'],
@@ -69,29 +75,122 @@ class FGC20Service extends Service {
       }],
       transaction: this.ctx.state.transaction
     })
-    return list.map(item => ({
-      address: item.contract.addressString,
-      addressHex: item.contractAddress,
-      name: item.name,
-      symbol: item.symbol,
-      decimals: item.decimals,
-      balance: item.contract.fgc20Balances.map(({balance}) => balance).reduce((x, y) => x + y)
-    }))
+    let mapping = new Map(list.map(item => [
+      item.contract.addressString,
+      {
+        address: item.contractAddress.toString('hex'),
+        addressHex: item.contractAddress,
+        name: item.name,
+        symbol: item.symbol,
+        decimals: item.decimals,
+        balance: item.contract.qrc20Balances.map(({balance}) => balance).reduce((x, y) => x + y),
+        unconfirmed: {
+          received: 0n,
+          sent: 0n
+        }
+      }
+    ]))
+    let unconfirmedList = await EVMReceipt.findAll({
+      where: {blockHeight: 0xffffffff},
+      attributes: ['senderData'],
+      include: [
+        {
+          model: TransactionOutput,
+          as: 'output',
+          on: {
+            transactionId: where(col('output.transaction_id'), '=', col('evm_receipt.transaction_id')),
+            outputIndex: where(col('output.output_index'), '=', col('evm_receipt.output_index'))
+          },
+          required: true,
+          attributes: ['scriptPubKey'],
+          include: [{
+            model: Address,
+            as: 'address',
+            required: true,
+            attributes: ['_id'],
+            include: [{
+              model: Contract,
+              as: 'contract',
+              required: true,
+              attributes: ['address', 'addressString'],
+              include: [{
+                model: FGC20,
+                as: 'fgc20',
+                required: true,
+                attributes: ['name', 'symbol', 'decimals']
+              }]
+            }]
+          }]
+        }
+      ],
+      transaction: this.ctx.state.transaction
+    })
+    for (let item of unconfirmedList) {
+      let scriptPubKey = OutputScript.fromBuffer(item.output.scriptPubKey)
+      if (![OutputScript.EVM_CONTRACT_CALL, OutputScript.EVM_CONTRACT_CALL_SENDER].includes(scriptPubKey.type)) {
+        continue
+      }
+      let byteCode = scriptPubKey.byteCode
+      if (byteCode.length === 68
+        && Buffer.compare(byteCode.slice(0, 4), transferABI.id) === 0
+        && Buffer.compare(byteCode.slice(4, 16), Buffer.alloc(12)) === 0
+      ) {
+        let data = {}
+        if (mapping.has(item.output.address.contract.addressString)) {
+          data = mapping.get(item.output.address.contract.addressString)
+        } else {
+          data = {
+            address: item.output.address.contract.address.toString('hex'),
+            addressHex: item.output.address.contract.address,
+            name: item.output.address.contract.qrc20.name,
+            symbol: item.output.address.contract.qrc20.symbol,
+            decimals: item.output.address.contract.qrc20.decimals,
+            balance: 0n,
+            unconfirmed: {
+              received: 0n,
+              sent: 0n
+            },
+            isUnconfirmed: true,
+            isNew: true
+          }
+          mapping.set(item.output.address.contract.addressString, data)
+        }
+        let from = item.senderData
+        let to = byteCode.slice(16, 36)
+        let value = BigInt(`0x${byteCode.slice(36).toString('hex')}`)
+        let isFrom = hexAddresses.some(address => Buffer.compare(address, from) === 0)
+        let isTo = hexAddresses.some(address => Buffer.compare(address, to) === 0)
+        if (isFrom || isTo) {
+          delete data.isNew
+        }
+        if (isFrom && !isTo) {
+          data.unconfirmed.sent += value
+        } else if (!isFrom && isTo) {
+          data.unconfirmed.received += value
+        }
+      }
+    }
+    return [...mapping.values()].filter(item => !item.isNew)
   }
 
   async getFGC20Balance(rawAddresses, tokenAddress) {
-    const {Address} = this.app.fantasygoldinfo.lib
-    const {Fgc20: FGC20, Fgc20Balance: FGC20Balance} = this.ctx.model
+    const {Address: RawAddress, OutputScript, Solidity} = this.app.fantasygoldinfo.lib
+    const transferABI = Solidity.fgc20ABIs.find(abi => abi.name === 'transfer')
+    const {
+      Address, TransactionOutput,
+      Contract, EvmReceipt: EVMReceipt, Qrc20: QRC20, Qrc20Balance: QRC20Balance,
+      where, col
+    } = this.ctx.model
     const {in: $in} = this.app.Sequelize.Op
     let hexAddresses = rawAddresses
-      .filter(address => [Address.PAY_TO_PUBLIC_KEY_HASH, Address.CONTRACT, Address.EVM_CONTRACT].includes(address.type))
+      .filter(address => [RawAddress.PAY_TO_PUBLIC_KEY_HASH, RawAddress.CONTRACT, RawAddress.EVM_CONTRACT].includes(address.type))
       .map(address => address.data)
     if (hexAddresses.length === 0) {
       return []
     }
     let token = await FGC20.findOne({
       where: {contractAddress: tokenAddress},
-      attributes: ['decimals'],
+      attributes: ['name', 'symbol', 'decimals'],
       transaction: this.ctx.state.transaction
     })
     let list = await FGC20Balance.findAll({
@@ -99,9 +198,66 @@ class FGC20Service extends Service {
       attributes: ['balance'],
       transaction: this.ctx.state.transaction
     })
+    let unconfirmedList = await EVMReceipt.findAll({
+      where: {blockHeight: 0xffffffff},
+      attributes: ['senderData'],
+      include: [{
+        model: TransactionOutput,
+        as: 'output',
+        on: {
+          transactionId: where(col('output.transaction_id'), '=', col('evm_receipt.transaction_id')),
+          outputIndex: where(col('output.output_index'), '=', col('evm_receipt.output_index'))
+        },
+        required: true,
+        attributes: ['scriptPubKey'],
+        include: [{
+          model: Address,
+          as: 'address',
+          required: true,
+          attributes: [],
+          include: [{
+            model: Contract,
+            as: 'contract',
+            required: true,
+            where: {address: tokenAddress},
+            attributes: []
+          }]
+        }]
+      }],
+      transaction: this.ctx.state.transaction
+    })
+    let unconfirmed = {
+      received: 0n,
+      sent: 0n
+    }
+    for (let item of unconfirmedList) {
+      let scriptPubKey = OutputScript.fromBuffer(item.output.scriptPubKey)
+      if (![OutputScript.EVM_CONTRACT_CALL, OutputScript.EVM_CONTRACT_CALL_SENDER].includes(scriptPubKey.type)) {
+        continue
+      }
+      let byteCode = scriptPubKey.byteCode
+      if (byteCode.length === 68
+        && Buffer.compare(byteCode.slice(0, 4), transferABI.id) === 0
+        && Buffer.compare(byteCode.slice(4, 16), Buffer.alloc(12)) === 0
+      ) {
+        let from = item.senderData
+        let to = byteCode.slice(16, 36)
+        let value = BigInt(`0x${byteCode.slice(36).toString('hex')}`)
+        let isFrom = hexAddresses.some(address => Buffer.compare(address, from) === 0)
+        let isTo = hexAddresses.some(address => Buffer.compare(address, to) === 0)
+        if (isFrom && !isTo) {
+          unconfirmed.sent += value
+        } else if (!isFrom && isTo) {
+          unconfirmed.received += value
+        }
+      }
+    }
     return {
+      name: token.name,
+      symbol: token.symbol,
+      decimals: token.decimals,
       balance: list.map(({balance}) => balance).reduce((x, y) => x + y, 0n),
-      decimals: token.decimals
+      unconfirmed
     }
   }
 
@@ -308,6 +464,7 @@ class FGC20Service extends Service {
         token.balance = initial
         initial -= token.amount
         initialBalanceMap.set(token.address, initial)
+        token.address = token.addressHex.toString('hex')
       }
       return result
     })
@@ -315,6 +472,71 @@ class FGC20Service extends Service {
       transactions = transactions.reverse()
     }
     return {totalCount, transactions}
+  }
+
+  async getAllFGC20TokenTransactions() {
+    const TransferABI = this.app.qtuminfo.lib.Solidity.fgc20ABIs.find(abi => abi.name === 'Transfer')
+    const db = this.ctx.model
+    const {sql} = this.ctx.helper
+    let {limit, offset, reversed = true} = this.ctx.state.pagination
+    let order = reversed ? 'DESC' : 'ASC'
+
+    let [{totalCount}] = await db.query(sql`
+      SELECT COUNT(*) AS totalCount
+      FROM fgc20, evm_receipt_log log
+      WHERE fgc20.contract_address = log.address AND log.topic1 = ${TransferABI.id}
+    `, {type: db.QueryTypes.SELECT, transaction: this.ctx.state.transaction})
+    let transactions = await db.query(sql`
+      SELECT
+        transaction.id AS transactionId,
+        evm_receipt.output_index AS outputIndex,
+        evm_receipt.block_height AS blockHeight,
+        header.hash AS blockHash,
+        header.timestamp AS timestamp,
+        fgc20.name AS name,
+        fgc20.symbol AS symbol,
+        fgc20.decimals AS decimals,
+        evm_receipt_log.topic2 AS topic2,
+        evm_receipt_log.topic3 AS topic3,
+        evm_receipt_log.data AS data
+      FROM (
+        SELECT log._id AS _id FROM fgc20, evm_receipt_log log
+        WHERE fgc20.contract_address = log.address AND log.topic1 = ${TransferABI.id}
+        ORDER BY log._id ${{raw: order}} LIMIT ${offset}, ${limit}
+      ) list
+      INNER JOIN evm_receipt_log ON evm_receipt_log._id = list._id
+      INNER JOIN evm_receipt ON evm_receipt._id = evm_receipt_log.receipt_id
+      INNER JOIN fgc20 ON fgc20.contract_address = evm_receipt_log.address
+      INNER JOIN transaction ON transaction._id = evm_receipt.transaction_id
+      INNER JOIN header ON header.height = evm_receipt.block_height
+      ORDER BY list._id ${{raw: order}}
+    `, {type: db.QueryTypes.SELECT, transaction: this.ctx.state.transaction})
+
+    let addresses = await this.ctx.service.contract.transformHexAddresses(
+      transactions.map(transaction => [transaction.topic2.slice(12), transaction.topic3.slice(12)]).flat()
+    )
+    return {
+      totalCount,
+      transactions: transactions.map((transaction, index) => {
+        let from = addresses[index * 2]
+        let to = addresses[index * 2 + 1]
+        return {
+          transactionId: transaction.transactionId,
+          outputIndex: transaction.outputIndex,
+          blockHeight: transaction.blockHeight,
+          blockHash: transaction.blockHash,
+          timestamp: transaction.timestamp,
+          token: {
+            name: transaction.name.toString(),
+            symbol: transaction.symbol.toString(),
+            decimals: transaction.decimals
+          },
+          ...from && typeof from === 'object' ? {from: from.hex.toString('hex'), fromHex: from.hex} : {from},
+          ...to && typeof to === 'object' ? {to: to.hex.toString('hex'), toHex: to.hex} : {to},
+          value: BigInt(`0x${transaction.data.toString('hex')}`)
+        }
+      })
+    }
   }
 
   async getFGC20TokenTransactions(contractAddress) {
@@ -368,8 +590,8 @@ class FGC20Service extends Service {
           blockHeight: transaction.blockHeight,
           blockHash: transaction.blockHash,
           timestamp: transaction.timestamp,
-          ...from && typeof from === 'object' ? {from: from.string, fromHex: from.hex} : {from},
-          ...to && typeof to === 'object' ? {to: to.string, toHex: to.hex} : {to},
+          ...from && typeof from === 'object' ? {from: from.hex.toString('hex'), fromHex: from.hex} : {from},
+          ...to && typeof to === 'object' ? {to: to.hex.toString('hex'), toHex: to.hex} : {to},
           value: BigInt(`0x${transaction.data.toString('hex')}`)
         }
       })
@@ -401,7 +623,7 @@ class FGC20Service extends Service {
         let address = addresses[index]
         return {
           ...address && typeof address === 'object' ? {
-            address: address.string,
+            address: address.hex.toString('hex'),
             addressHex: address.hex.toString('hex')
           } : {address},
           balance

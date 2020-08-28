@@ -8,22 +8,23 @@ class InfoService extends Service {
     let dgpInfo = JSON.parse(await this.app.redis.hget(this.app.name, 'dgpinfo')) || {}
     return {
       height,
-      supply: this.getTotalSupply(height),
-      circulatingSupply: this.getCirculatingSupply(height),
+      supply: this.getTotalSupply(),
+      ...this.app.chain.name === 'mainnet' ? {circulatingSupply: this.getCirculatingSupply()} : {},
       netStakeWeight: Math.round(stakeWeight),
       feeRate,
       dgpInfo
     }
   }
 
-  getTotalSupply(height) {
-    if (height <= 8800) {
+  getTotalSupply() {
+    let height = this.app.blockchainInfo.tip.height
+    if (height <= this.app.chain.lastPoWBlockHeight) {
       return height * 20000
     } else {
-      let supply = 1.76e8
+      let supply = 1e8
       let reward = 5
       let interval = 985500
-      let stakeHeight = height - 8800
+      let stakeHeight = height - this.app.chain.lastPoWBlockHeight
       let halvings = 0
       while (halvings < 7 && stakeHeight > interval) {
         supply += interval * reward / (1 << halvings++)
@@ -35,12 +36,13 @@ class InfoService extends Service {
   }
 
   getTotalMaxSupply() {
-    return 12e6 + 985500 * 5 * (1 - 1 / 2 ** 7) / (1 - 1 / 2)
+    return 1e8 + 985500 * 5 * (1 - 1 / 2 ** 7) / (1 - 1 / 2)
   }
 
-  getCirculatingSupply(height) {
+  getCirculatingSupply() {
+    let height = this.app.blockchainInfo.tip.height
     let totalSupply = this.getTotalSupply(height)
-    if (this.app.config.fantasygold.chain === 'mainnet') {
+    if (this.app.chain.name === 'mainnet') {
       return totalSupply - 575e4
     } else {
       return totalSupply
@@ -52,7 +54,7 @@ class InfoService extends Service {
     const {gte: $gte} = this.app.Sequelize.Op
     let height = await Header.aggregate('height', 'max', {transaction: this.ctx.state.transaction})
     let list = await Header.findAll({
-      where: {height: {[$gte]: height - 72}},
+      where: {height: {[$gte]: height - 500}},
       attributes: ['timestamp', 'bits'],
       order: [['height', 'ASC']],
       transaction: this.ctx.state.transaction

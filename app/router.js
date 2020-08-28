@@ -12,10 +12,20 @@ module.exports = app => {
   router.get('/feerates', controller.info.feeRates)
 
   router.get('/blocks', controller.block.list)
+  router.get(
+    '/block/list',
+    paginationMiddleware,
+    controller.block.blockList
+  )
   router.get('/block/:block', controller.block.block)
   router.get('/raw-block/:block', controller.block.rawBlock)
   router.get('/recent-blocks', controller.block.recent)
 
+  router.get(
+    '/tx/list',
+    paginationMiddleware,
+    controller.transaction.list
+  )
   router.get('/tx/:id', controller.transaction.transaction)
   router.get('/txs/:ids', controller.transaction.transactions)
   router.get('/raw-tx/:id', controller.transaction.rawTransaction)
@@ -88,6 +98,11 @@ module.exports = app => {
     controller.address.fgc20TokenTransactions
   )
   router.get(
+    '/address/:address/fgc20-mempool-txs/:token',
+    addressMiddleware, middleware.contract('token'),
+    controller.address.qrc20TokenMempoolTransactions
+  )
+  router.get(
     '/address/:address/utxo',
     addressMiddleware,
     controller.address.utxo
@@ -152,6 +167,11 @@ module.exports = app => {
     '/fgc20',
     paginationMiddleware,
     controller.fgc20.list
+  )
+  router.get(
+    '/fgc20/txs',
+    paginationMiddleware,
+    controller.qrc20.allTransactions
   )
   router.get(
     '/fgc20/:token/txs',
